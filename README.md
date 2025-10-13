@@ -17,6 +17,7 @@ git clone https://github.com/amphionspace/FlexiCodec.git
 <!-- # pip install -e . -->
 
 ## FlexiCodec
+Code is available under `flexicodec/modeling_flexicodec`. Inference example:
 ```python
 from flexicodec.infer import prepare_model, encode_flexicodec
 model_dict = prepare_model()
