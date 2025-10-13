@@ -16,7 +16,7 @@ git clone https://amphionspace/flexicodec
 # pip install -e .
 ```
 
-## Codec
+## FlexiCodec
 ```python
 from flexicodec.infer import prepare_model, encode_flexicodec
 model_dict = prepare_model()
@@ -42,13 +42,14 @@ print(f"This sample avg frame rate: {encoded_output['token_lengths'].shape[-1] /
 ```
 Batched input is supported.
 
-## TTS
-
+## FlexiCodec-TTS
+Our code for Flexicodec-based AR TTS is available at `flexicodec/ar_tts/modeling_artts.py`.
+Our code for Flow matching-based NAR TTS is based on the code [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
 
 ## Acknowledgements & Citation
 - Our codebase setup is based on [DualCodec](https://github.com/jiaqili3/DualCodec)
 
-If you find our work useful, you can cite as:
+If you find our work useful, please consider citing as:
 ```biblatex
 @article{li2025flexicodec,
   title={FlexiCodec: A Dynamic Neural Audio Codec for Low Frame Rates},
