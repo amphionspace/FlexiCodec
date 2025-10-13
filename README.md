@@ -14,7 +14,7 @@ git clone https://github.com/amphionspace/FlexiCodec.git
 <!-- # pip install -e . -->
 
 ## FlexiCodec
-Code is available under `flexicodec/modeling_flexicodec`. Inference example:
+Code is available under [`flexicodec/modeling_flexicodec.py`](flexicodec/modeling_flexicodec.py). Inference example:
 ```python
 from flexicodec.infer import prepare_model, encode_flexicodec
 model_dict = prepare_model()
@@ -41,8 +41,8 @@ print(f"This sample avg frame rate: {encoded_output['token_lengths'].shape[-1] /
 Batched input is supported.
 
 ## FlexiCodec-TTS
-Our code for Flexicodec-based AR TTS is available at `flexicodec/ar_tts/modeling_artts.py`.
-Our code for Flow matching-based NAR TTS is based on the code [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
+Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py).
+Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
 
 ## Acknowledgements & Citation
 - Our codebase setup is based on [DualCodec](https://github.com/jiaqili3/DualCodec)
