@@ -1,0 +1,32 @@
+
+model:
+  sample_rate: 16000
+  encoder_dim: 32
+  encoder_rates: [4,4,5,8,2]
+  decoder_rates: [2,8,5,4,4]
+  n_codebooks: 24
+  quantizer_dropout: 1.0
+  codebook_size: 4096
+  semantic_codebook_size: 32768
+  is_causal: false
+  use_similarity_alignment: true
+  similarity_threshold: 0.91
+  semantic_downsample_factor: 1.33333
+  skip_normalize: true
+  semantic_model_type: "sensevoice"
+  latent_dim: 512
+  ssl_dim: 512
+  use_bottleneck_transformer: true
+  transformer_num_layers: 32
+  transformer_dim_feedforward: 2048
+  transformer_num_heads: 8
+  transformer_causal: false
+  transformer_context_frames: 16
+  max_tokens_per_group: 8
+  semantic_model_path: null
+  use_query_token_aggregator: true
+  use_dynamic_similarity_threshold: true
+  similarity_threshold_lower: 0.8
+  similarity_threshold_upper: 1.0
+
+ 
