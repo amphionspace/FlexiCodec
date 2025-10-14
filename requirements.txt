@@ -1,0 +1,4 @@
+funasr
+easydict
+descript-audio-codec
+pyyaml

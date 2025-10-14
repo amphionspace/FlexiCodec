@@ -10,6 +10,7 @@ Neural audio codecs are foundational to speech language models. It is expected t
 ## Installation
 ```bash
 git clone https://github.com/amphionspace/FlexiCodec.git
+pip install -r requirements.txt
 ```
 <!-- # pip install -e . -->
 
