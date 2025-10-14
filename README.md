@@ -17,6 +17,8 @@ pip install -r requirements.txt
 ## FlexiCodec
 Code is available under [`flexicodec/modeling_flexicodec.py`](flexicodec/modeling_flexicodec.py). Inference example:
 ```python
+import torch
+import torchaudio
 from flexicodec.infer import prepare_model, encode_flexicodec
 model_dict = prepare_model()
   
