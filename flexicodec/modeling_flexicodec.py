@@ -452,6 +452,21 @@ class FlexiCodec(nn.Module):
         codes = rearrange(codes, 'b 1 t -> b t')
         return codes
 
+    def get_semantic_feature(self, semantic_codes):
+        """
+        Get the semantic feature from semantic codes.
+        Args:
+            semantic_codes: torch.Tensor, shape (B, n_q_s, G)
+        Returns:
+            torch.Tensor: semantic feature, shape (B, C, T)
+        """
+        semantic = self.semantic_vq.from_codes(semantic_codes)[0]
+        if self.decode_semantic_for_codec:
+            semantic_decoded = self.convnext_decoder(semantic)
+        else:
+            semantic_decoded = semantic
+        return semantic_decoded
+
     def decode_from_codes(self, semantic_codes, acoustic_codes, token_lengths=None):
         """
         Decodes from semantic and acoustic codes. If token_lengths are provided,
