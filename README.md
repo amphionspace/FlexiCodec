@@ -50,6 +50,8 @@ For Chinese users, you might need to execute `export HF_ENDPOINT=https://hf-mirr
 Batched input is supported. You can directly pass audios shaped [B,T] to the script above, but the audio length information will be unavailable.
 To resolve this, you can additionally pass an `audio_lens` parameter to `encode_flexicodec`, and you can crop the output for each audio in `encoded_output[speech_token_len]`. 
 
+If you want to use the above code elsewhere, you might want to add `sys.path.append('PATH_TO_FLEXICODEC_REPOSITORY')` to find the code.
+
 To extract continuous features from the semantic tokens, use:
 ```python
 feat = model_dict['model'].get_semantic_feature(encoded_output['semantic_codes'])
