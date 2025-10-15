@@ -726,8 +726,6 @@ class TransformerLMWrapper(BaseModel):
         }
     
     def training_forward(self, dl_output) -> Dict[str, Optional[torch.Tensor]]:
-        IS_CSDS = os.environ.get("IS_CSDS", "0")
-        assert IS_CSDS == "1", "IS_CSDS must be 1"
         x = dl_output.get("x", None)
         x_lens = dl_output.get("x_lens", None)
         text_ids = dl_output.get("text_ids", None)
@@ -750,77 +748,6 @@ class TransformerLMWrapper(BaseModel):
         token_lengths = flexicodec_output['token_lengths']   # [B, T] - duration for each speech token
         speech_token_len = flexicodec_output['speech_token_len'] # [B] - speech token length
         device = speech_tokens.device
-        
-        # Handle dialog data with speaker change signaling
-        if 'spk_times' in dl_output:
-            # spk_times: list of seconds where speaker changes occur
-            spk_times = dl_output['spk_times']
-            
-            # Process each batch item to modify token_lengths at speaker change locations
-            for batch_idx in range(speech_tokens.size(0)):
-                current_token_lengths = token_lengths[batch_idx, :speech_token_len[batch_idx]]
-                current_spk_times = spk_times[batch_idx]
-                
-                if len(current_spk_times) > 0:
-                    # Each token spans 80ms when expanded
-                    token_duration_ms = 80.0  # milliseconds per token
-                    
-                    # Convert speaker change times (in seconds) to milliseconds
-                    spk_times_ms = [t * 1000.0 for t in current_spk_times]
-                    
-                    # Calculate cumulative time for each token position
-                    cumulative_time_ms = 0.0
-                    token_time_positions = []
-                    
-                    for token_idx in range(len(current_token_lengths)):
-                        token_time_positions.append(cumulative_time_ms)
-                        # Each token contributes token_duration_ms * token_lengths[token_idx] to the total time
-                        cumulative_time_ms += token_duration_ms * current_token_lengths[token_idx].item()
-                    
-                    if self.transformer_lm.use_dialog_span:
-                        # New logic: alternating add 10 based on speaker turn
-                        # Turn 1 ([t1, t2)) -> no add
-                        # Turn 2 ([t2, t3)) -> add
-                        # ... and so on. Add for even-numbered turns.
-                        for turn_idx_minus_1 in range(len(spk_times_ms)):
-                            turn_idx = turn_idx_minus_1 + 1
-                            
-                            start_time = spk_times_ms[turn_idx_minus_1]
-                            end_time = spk_times_ms[turn_idx] if (turn_idx < len(spk_times_ms) and spk_times_ms[turn_idx]!=0) else float('inf')
-                            
-                            if turn_idx % 2 == 0: # Add 10 for even turns (2nd, 4th, etc.)
-                                for token_idx in range(len(current_token_lengths)):
-                                    token_time = token_time_positions[token_idx]
-                                    if start_time <= token_time < end_time:
-                                        current_length = current_token_lengths[token_idx].item()
-                                        if current_length > 10:
-                                            new_length = current_length - 10 # undo spkchange
-                                        else:
-                                            new_length = min(current_length + 10, 20) 
-                                        token_lengths[batch_idx, token_idx] = new_length
-                    else:
-                        # Original logic: modify token length only at speaker change points
-                        for spk_time_ms in spk_times_ms:
-                            if spk_time_ms == 0:
-                                continue
-                            # Find the token position closest to this speaker change time
-                            closest_token_idx = 0
-                            min_distance = float('inf')
-                            
-                            for token_idx in range(len(current_token_lengths)):
-                                distance = abs(token_time_positions[token_idx] - spk_time_ms)
-                                if distance < min_distance:
-                                    min_distance = distance
-                                    closest_token_idx = token_idx
-                            
-                            # Modify the token length by adding 10 to signal speaker change
-                            # Ensure we don't exceed reasonable bounds
-                            current_length = current_token_lengths[closest_token_idx].item()
-                            if current_length > 10:
-                                new_length = current_length - 10 # undo spkchange
-                            else:
-                                new_length = min(current_length + 10, 20)  # Cap at 255 to avoid overflow
-                            token_lengths[batch_idx, closest_token_idx] = new_length
         
         # Prepare batch for LLM model
         model_batch = {
