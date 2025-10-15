@@ -51,9 +51,11 @@ def prepare_model(sensevoice_small_path=None, device='auto', ckpt_path=None, con
     return {"model": model, "feature_extractor": feature_extractor, "type": "sensevoice"}
 
 @torch.no_grad()
-def encode_flexicodec(audio: torch.Tensor, model: dict, sample_rate: int=16000, num_quantizers: int = 8, merging_threshold: float = 0.91):
+def encode_flexicodec(audio: torch.Tensor, model: dict, sample_rate: int=16000, num_quantizers: int = 8, merging_threshold: float = 0.91, audio_lens=None):
     """
     Encodes the audio using the FlexiCodec model.
+    Audio: [B,T]
+    audio_lens: [B]
     """
     assert len(audio.shape) == 2, "audio should be [B, T]"
     batch_size = audio.shape[0]
@@ -72,7 +74,10 @@ def encode_flexicodec(audio: torch.Tensor, model: dict, sample_rate: int=16000, 
     # Process each batch item individually and concatenate features
     features_list = []
     for i in range(audio_16k.shape[0]):
-        features_i, _ = feature_extractor.extract_fbank(audio_16k[i:i+1].cpu())
+        if audio_lens is not None:
+            features_i, _ = feature_extractor.extract_fbank(audio_16k[i:i+1,:audio_lens[i]].cpu())
+        else:
+            features_i, _ = feature_extractor.extract_fbank(audio_16k[i:i+1].cpu())
         features_list.append(features_i.squeeze(0))
     features_lens = torch.tensor([features_i.shape[0] for features_i in features_list])
     features_lens = features_lens.to(device)
