@@ -15,11 +15,14 @@ pip install -r requirements.txt
 <!-- # pip install -e . -->
 
 ## FlexiCodec
-Code is available under [`flexicodec/modeling_flexicodec.py`](flexicodec/modeling_flexicodec.py). Inference example:
+Code is available under [`flexicodec/modeling_flexicodec.py`](flexicodec/modeling_flexicodec.py). 
+
+To run inference (automatically downloads checkpoint from huggingface):
 ```python
 import torch
 import torchaudio
 from flexicodec.infer import prepare_model, encode_flexicodec
+
 model_dict = prepare_model()
   
 # Load a real audio file
@@ -27,31 +30,42 @@ audio_path = "YOUR_WAV.wav"
 audio, sample_rate = torchaudio.load(audio_path)
 with torch.no_grad():
     encoded_output = encode_flexicodec(audio, model_dict, sample_rate, num_quantizers=8, merging_threshold=0.91)
+    
     reconstructed_audio = model_dict['model'].decode_from_codes(
         semantic_codes=encoded_output['semantic_codes'],
         acoustic_codes=encoded_output['acoustic_codes'],
         token_lengths=encoded_output['token_lengths'],
     )
 
-duration = audio.shape[-1] / 16000
-
+duration = audio.shape[-1] / sample_rate
 output_path = 'decoded_audio.wav'
 torchaudio.save(output_path, reconstructed_audio.cpu().squeeze(1), 16000)
 
 print(f"Saved decoded audio to {output_path}")
 print(f"This sample avg frame rate: {encoded_output['token_lengths'].shape[-1] / duration:.4f} frames/sec")
 ```
-Batched input is supported.
+For Chinese users, you might need to execute `export HF_ENDPOINT=https://hf-mirror.com` in terminal, before running the code. If you don't want to automatically download from huggingface, you can manually specify your downloaded checkpoint paths in `prepare_model`. 
+
+
+Batched input is supported. You can directly pass audios shaped [B,T] to the script above, but the audio length information will be unavailable.
+To resolve this, you can additionally pass an `audio_lens` parameter to `encode_flexicodec`, and you can crop the output for each audio in `encoded_output[speech_token_len]`. 
+
+To extract continuous features from the semantic tokens, use:
+```python
+feat = model_dict['model'].get_semantic_feature(encoded_output['semantic_codes'])
+```
 
 ## FlexiCodec-TTS
-Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py).
+Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py). The training step is inside `training_forward` method. It receives a `dl_output` dictionary containing `x` (the [`feature_extractor`](flexicodec/infer.py#L50) output), `x_lens` (length of each x before padding), `audio` (the 16khz audio tensor). The inference is at the `inference` method in the same file.
+
 Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
+We plan to release TTS trained models and TTS training examples.
 
 ## Acknowledgements & Citation
 - Our codebase setup is based on [DualCodec](https://github.com/jiaqili3/DualCodec)
 - We thank the [Mimi Codec](https://github.com/kyutai-labs/moshi) for transformer implementations
 
-If you find our work useful, please consider citing as:
+If you find our works useful, please consider citing as:
 ```biblatex
 @article{li2025flexicodec,
   title={FlexiCodec: A Dynamic Neural Audio Codec for Low Frame Rates},
