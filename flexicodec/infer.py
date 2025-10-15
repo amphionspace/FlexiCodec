@@ -8,7 +8,7 @@ from huggingface_hub import snapshot_download, hf_hub_download
 get_params = lambda model: sum(p.numel() for p in model.parameters()) / 1e6
 
 def prepare_model(sensevoice_small_path=None, device='auto', ckpt_path=None, config_path=None):
-    """Loads the DualCodec model and its corresponding feature extractor."""
+    """Loads the FlexiCodec model and its corresponding feature extractor."""
     if sensevoice_small_path is None:
         sensevoice_small_path = snapshot_download('FunAudioLLM/SenseVoiceSmall')
     if config_path is None:
@@ -189,11 +189,7 @@ def infer(audio: torch.Tensor, model: dict, sample_rate: int=16000, num_quantize
 
 # Example usage
 if __name__ == '__main__':
-    model_dict = prepare_model(sensevoice_small_path='/Users/jiaqi/github/SenseVoiceSmall', 
-        device='auto',
-        ckpt_path='/Users/jiaqi/github/zero-shot-tts-training/12hz_v1_half.safetensors', 
-        config_path='/Users/jiaqi/github/zero-shot-tts-training/conf/model/flexicodec/amlt/librilight_dualcodecsensevoice_sim_1_0_8hz_sim0_85_init_query_repa_larger_transformer_insert_before_dynamic_fsq_v3_smallwindow.yaml'
-    )
+    model_dict = prepare_model()
     
     # Load a real audio file
     audio_path = '/Users/jiaqi/Downloads/00000.wav'
