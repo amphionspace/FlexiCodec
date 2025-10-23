@@ -48,7 +48,7 @@ print(f"This sample avg frame rate: {encoded_output['token_lengths'].shape[-1] /
 ```
 
 Notes:
-- You may tune the `num_quantizers=xxx`, `merging_threshold=xxx` parameters. If you set `merging_threshold=1.0`, it will be a standard 12.5Hz neural audio codec. 
+- You may tune the `num_quantizers=xxx` (maximum 24), `merging_threshold=xxx` (maximum 1.0) parameters. If you set `merging_threshold=1.0`, it will be a standard 12.5Hz neural audio codec. All of its `token_lengths` items will be 1. 
 
 - For Chinese users, you might need to execute `export HF_ENDPOINT=https://hf-mirror.com` in terminal, before running the code. If you don't want to automatically download from huggingface, you can manually specify your downloaded checkpoint paths [![Huggingface](https://img.shields.io/badge/huggingface-yellow?logo=huggingface&style=flat-square)](https://huggingface.co/jiaqili3/flexicodec/tree/main) in `prepare_model`. 
 
