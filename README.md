@@ -50,7 +50,7 @@ print(f"This sample avg frame rate: {encoded_output['token_lengths'].shape[-1] /
 Notes:
 - You may tune the `num_quantizers=xxx` (maximum 24), `merging_threshold=xxx` (maximum 1.0) parameters. If you set `merging_threshold=1.0`, it will be a standard 12.5Hz neural audio codec. All of its `token_lengths` items will be 1. 
 
-- For Chinese users, you might need to execute `export HF_ENDPOINT=https://hf-mirror.com` in terminal, before running the code. If you don't want to automatically download from huggingface, you can manually specify your downloaded checkpoint paths [![Huggingface](https://img.shields.io/badge/huggingface-yellow?logo=huggingface&style=flat-square)](https://huggingface.co/jiaqili3/flexicodec/tree/main) in `prepare_model`. 
+- For mainland China users, you might need to execute `export HF_ENDPOINT=https://hf-mirror.com` in terminal, before running the code. If you don't want to automatically download from huggingface, you can manually specify your downloaded checkpoint paths [![Huggingface](https://img.shields.io/badge/huggingface-yellow?logo=huggingface&style=flat-square)](https://huggingface.co/jiaqili3/flexicodec/tree/main) in `prepare_model`. 
 
 
 - Batched input is supported. You can directly pass audios shaped [B,T] to the script above, but the audio length information will be unavailable.
@@ -64,10 +64,70 @@ To resolve this, you can additionally pass an `audio_lens` parameter to `encode_
   ```
 
 ## FlexiCodec-TTS
+First, install additional dependencies:
+```bash
+pip install cached_path
+```
+
 Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py). The training step is inside `training_forward` method. It receives a `dl_output` dictionary containing `x` (the [`feature_extractor`](flexicodec/infer.py#L50) output), `x_lens` (length of each x before padding), `audio` (the 16khz audio tensor). The inference is at the `inference` method in the same file.
 
 Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
-We plan to release TTS trained models and TTS training examples.
+
+### FlexiCodec-Voicebox NAR TTS Inference
+
+To run NAR TTS inference using FlexiCodec-Voicebox:
+
+```python
+import torch
+import torchaudio
+from flexicodec.nar_tts.inference_voicebox import (
+    prepare_voicebox_model, 
+    infer_voicebox_tts
+)
+import cached_path
+# Prepare model (loads model and vocoder)
+checkpoint_path = cached_path('hf://jiaqili3/flexicodec/nartts.safetensors')
+model_dict = prepare_voicebox_model(checkpoint_path)
+
+# Option 1: Inference with audio file paths
+gt_audio_path = "audio_examples/61-70968-0000_gt.wav"  # Target content. Example GT audio
+ref_audio_path = "audio_examples/61-70968-0000_ref.wav"     # Reference voice/style. 
+
+output_audio, output_sr = infer_voicebox_tts(
+    model_dict=model_dict,
+    gt_audio_path=gt_audio_path,
+    ref_audio_path=ref_audio_path,
+    n_timesteps=15,      # Number of diffusion steps (default: 15)
+    cfg=2.0,             # Classifier-free guidance scale (default: 2.0)
+    rescale_cfg=0.75     # CFG rescaling factor (default: 0.75)
+)
+
+# Save output
+torchaudio.save("output.wav", output_audio.unsqueeze(0) if output_audio.dim() == 1 else output_audio, output_sr)
+
+# Option 2: Inference with audio tensors
+gt_audio, gt_sr = torchaudio.load("path/to/ground_truth.wav")
+ref_audio, ref_sr = torchaudio.load("path/to/reference.wav")
+
+output_audio, output_sr = infer_voicebox_tts(
+    model_dict=model_dict,
+    gt_audio=gt_audio,
+    ref_audio=ref_audio,
+    gt_sample_rate=gt_sr,
+    ref_sample_rate=ref_sr,
+    n_timesteps=15,
+    cfg=2.0,
+    rescale_cfg=0.75
+)
+```
+
+**Notes:**
+- The model automatically detects and uses CUDA, MPS (Apple Silicon), or CPU devices
+- Ground truth audio (`gt_audio`) determines the semantic content of the output
+- Reference audio (`ref_audio`) determines the voice/style characteristics
+- Output sample rate is typically 16000 Hz or 24000 Hz depending on the model configuration
+- You can reuse `model_dict` for multiple inference calls to avoid reloading the model
+
 
 ## Acknowledgements & Citation
 - Our codebase setup is based on [DualCodec](https://github.com/jiaqili3/DualCodec)
