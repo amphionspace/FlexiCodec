@@ -21,8 +21,6 @@ from flexicodec.feature_extractors import FBankGen
 # Global feature extractor for dualcodec
 feature_extractor_for_dualcodec = FBankGen(sr=16000)
 
-threshold = 1.0
-
 # Global model cache
 _model_cache = None
 _vocoder_cache = None
@@ -108,6 +106,7 @@ def infer_voicebox_tts(
     n_timesteps: int = 15,
     cfg: float = 2.0,
     rescale_cfg: float = 0.75,
+    merging_threshold: float = 1.0,
 ) -> tuple:
     """
     Perform Voicebox-based NAR TTS inference.
@@ -123,6 +122,9 @@ def infer_voicebox_tts(
         n_timesteps: Number of diffusion timesteps (default: 15)
         cfg: Classifier-free guidance scale (default: 2.0)
         rescale_cfg: Rescaling factor for CFG (default: 0.75)
+        merging_threshold: Merging threshold for FlexiCodec frame rate control (default: 1.0, max: 1.0)
+            - Lower values (e.g., 0.87, 0.91) enable dynamic frame rate merging
+            - Value of 1.0 disables merging (standard 12.5Hz codec)
     
     Returns:
         tuple: (output_audio_tensor, sample_rate)
@@ -177,6 +179,7 @@ def infer_voicebox_tts(
         n_timesteps=n_timesteps,
         cfg=cfg,
         rescale_cfg=rescale_cfg,
+        merging_threshold=merging_threshold,
     )
 
 
@@ -201,6 +204,7 @@ def infer_voicebox_librispeech(
     n_timesteps: int = 10,
     cfg: float = 2.0,
     rescale_cfg: float = 0.75,
+    merging_threshold: float = 1.0,
 ):
     """Perform inference using Voicebox model with LibriSpeech data"""
     use_decoder_latent = model.use_decoder_latent
@@ -241,9 +245,9 @@ def infer_voicebox_librispeech(
     ref_mel_features = ref_mel_features.to(device)
     ref_x_lens = torch.tensor([ref_mel_features.shape[1]], dtype=torch.long, device=device)
 
-    model.dualcodec_model.similarity_threshold = threshold
+    model.dualcodec_model.similarity_threshold = merging_threshold
 
-    ref_dualcodec_output = model._extract_dualcodec_features(ref_audio, mel=ref_mel_features, x_lens=ref_x_lens, manual_threshold=threshold)
+    ref_dualcodec_output = model._extract_dualcodec_features(ref_audio, mel=ref_mel_features, x_lens=ref_x_lens, manual_threshold=merging_threshold)
     if not use_decoder_latent:
         ref_cond_codes = ref_dualcodec_output['semantic_codes'].squeeze(1)
     else:
@@ -274,7 +278,7 @@ def infer_voicebox_librispeech(
         scale_factor=voicebox_model.cond_scale_factor,
     ).transpose(1, 2)
     if model.add_framerate_embedding:
-        framerate_idx = model.flex_framerate_options.index(threshold)
+        framerate_idx = model.flex_framerate_options.index(merging_threshold)
         framerate_emb = model.framerate_embedding(torch.tensor(framerate_idx, device=device))
         cond_feature = cond_feature + framerate_emb.unsqueeze(0).unsqueeze(0)
     

@@ -56,7 +56,7 @@ Notes:
 - Batched input is supported. You can directly pass audios shaped [B,T] to the script above, but the audio length information will be unavailable.
 To resolve this, you can additionally pass an `audio_lens` parameter to `encode_flexicodec`, and you can crop the output for each audio in `encoded_output[speech_token_len]`. 
 
-- If you want to use the above code elsewhere, you might want to add `sys.path.append('PATH_TO_FLEXICODEC_REPOSITORY')` to find the code.
+- If you want to use the above code elsewhere, you might want to add `sys.path.append('/path/to/FlexiCodec')` to find the code.
 
 - To extract continuous features from the semantic tokens, use:
   ```python
@@ -73,8 +73,8 @@ Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modelin
 
 Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
 
-### FlexiCodec-Voicebox NAR TTS Inference
-
+### FlexiCodec-based Voicebox NAR TTS Inference
+The VoiceBox NAR system can decode FlexiCodec's RVQ-1 tokens into speech. It is used as the second stage in FlexiCodec-TTS, but can also be used standalone.
 To run NAR TTS inference using FlexiCodec-Voicebox:
 
 ```python
@@ -97,9 +97,10 @@ output_audio, output_sr = infer_voicebox_tts(
     model_dict=model_dict,
     gt_audio_path=gt_audio_path,
     ref_audio_path=ref_audio_path,
-    n_timesteps=15,      # Number of diffusion steps (default: 15)
-    cfg=2.0,             # Classifier-free guidance scale (default: 2.0)
-    rescale_cfg=0.75     # CFG rescaling factor (default: 0.75)
+    n_timesteps=15,          # Number of diffusion steps (default: 15)
+    cfg=2.0,                 # Classifier-free guidance scale (default: 2.0)
+    rescale_cfg=0.75,        # CFG rescaling factor (default: 0.75)
+    merging_threshold=1.0    # Merging threshold for frame rate control (default: 1.0, max: 1.0)
 )
 
 # Save output
@@ -117,7 +118,8 @@ output_audio, output_sr = infer_voicebox_tts(
     ref_sample_rate=ref_sr,
     n_timesteps=15,
     cfg=2.0,
-    rescale_cfg=0.75
+    rescale_cfg=0.75,
+    merging_threshold=1.0
 )
 ```
 
@@ -127,6 +129,7 @@ output_audio, output_sr = infer_voicebox_tts(
 - Reference audio (`ref_audio`) determines the voice/style characteristics
 - Output sample rate is typically 16000 Hz or 24000 Hz depending on the model configuration
 - You can reuse `model_dict` for multiple inference calls to avoid reloading the model
+- `merging_threshold` controls FlexiCodec's dynamic frame rate: lower values (e.g., 0.87, 0.91) enable merging for lower average frame rates, while 1.0 disables merging (standard 12.5Hz)
 
 
 ## Acknowledgements & Citation
