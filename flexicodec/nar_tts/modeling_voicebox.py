@@ -58,7 +58,7 @@ class VoiceboxWrapper(nn.Module):
         super().__init__()
         
         print("Preparing FlexiCodec model for feature extraction...")
-        self.flexicodec_model = prepare_model()
+        self.flexicodec_model = prepare_model()['model']
         
         # Freeze FlexiCodec model parameters
         for param in self.flexicodec_model.parameters():
@@ -118,6 +118,11 @@ class VoiceboxWrapper(nn.Module):
         
         self.trainer_callbacks = []
         self.step = 0
+    
+    @property
+    def dualcodec_model(self):
+        """Alias for flexicodec_model for backward compatibility"""
+        return self.flexicodec_model
     
     def compute_repa_loss(self, hidden_features_downsampled, target_repr, mask=None):
         """
