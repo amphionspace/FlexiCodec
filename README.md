@@ -66,14 +66,15 @@ To resolve this, you can additionally pass an `audio_lens` parameter to `encode_
 ## FlexiCodec-TTS
 First, install additional dependencies:
 ```bash
-pip install cached_path
+sudo apt install espeak-ng
+pip install cached_path phonemizer openai-whisper
 ```
 
 Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py). The training step is inside `training_forward` method. It receives a `dl_output` dictionary containing `x` (the [`feature_extractor`](flexicodec/infer.py#L50) output), `x_lens` (length of each x before padding), `audio` (the 16khz audio tensor). The inference is at the `inference` method in the same file.
 
 Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
 
-### FlexiCodec-based Voicebox NAR TTS Inference
+### FlexiCodec-based Voicebox NAR Inference
 The VoiceBox NAR system can decode FlexiCodec's RVQ-1 tokens into speech. It is used as the second stage in FlexiCodec-TTS, but can also be used standalone.
 To run NAR TTS inference using FlexiCodec-Voicebox:
 
@@ -130,6 +131,59 @@ output_audio, output_sr = infer_voicebox_tts(
 - Output sample rate is typically 16000 Hz or 24000 Hz depending on the model configuration
 - You can reuse `model_dict` for multiple inference calls to avoid reloading the model
 - `merging_threshold` controls FlexiCodec's dynamic frame rate: lower values (e.g., 0.87, 0.91) enable merging for lower average frame rates, while 1.0 disables merging (standard 12.5Hz)
+
+### FlexiCodec-based AR+NAR TTS Inference
+The AR+NAR TTS system generates speech tokens from text using an autoregressive transformer model, and then uses the Voicebox NAR system to decode the tokens into audio.
+
+To perform complete text-to-speech with both AR generation and NAR decoding:
+
+```python
+import torch
+import torchaudio
+from flexicodec.ar_tts.inference_tts import tts_synthesize
+from flexicodec.ar_tts.modeling_artts import prepare_artts_model
+from flexicodec.nar_tts.inference_voicebox import prepare_voicebox_model
+import cached_path
+
+# Prepare both AR and NAR models
+ar_checkpoint = cached_path('hf://jiaqili3/flexicodec/artts.safetensors')
+nar_checkpoint = cached_path('hf://jiaqili3/flexicodec/nartts.safetensors')
+
+ar_model_dict = prepare_artts_model(ar_checkpoint)
+nar_model_dict = prepare_voicebox_model(nar_checkpoint)
+
+# Full TTS synthesis
+output_audio, output_sr = tts_synthesize(
+    ar_model_dict=ar_model_dict,
+    nar_model_dict=nar_model_dict,
+    text="Hello, this is a complete text-to-speech example.",
+    language="en",
+    ref_audio_path="audio_examples/61-70968-0000_ref.wav",  # Reference voice
+    ref_text="bear us escort so far as the Sheriff's house",  # Optional reference text
+    merging_threshold=0.91,  # Frame rate control (used for both AR and NAR)
+    beam_size=1,
+    top_k=25,
+    temperature=1.0,
+    predict_duration=True,
+    duration_top_k=1,
+    n_timesteps=15,  # NAR diffusion steps
+    cfg=2.0,  # NAR classifier-free guidance
+    rescale_cfg=0.75,  # NAR CFG rescaling
+    use_nar=True,  # Set to False for AR-only decoding
+)
+
+# Save output
+torchaudio.save("output.wav", output_audio.unsqueeze(0) if output_audio.dim() == 1 else output_audio, output_sr)
+```
+
+**Notes:**
+- `tts_synthesize` performs the full pipeline: AR generation + NAR decoding to audio
+- Reference audio (`ref_audio_path`) provides the voice/style characteristics
+- Reference text (`ref_text`) is optional and can help with prosody alignment
+- Set `use_nar=False` in `tts_synthesize` to use AR-only decoding (faster but lower quality)
+
+### Training reference implementations
+Inside `flexicodec/ar_tts/modeling_artts.py` and `flexicodec/nar_tts/modeling_voicebox.py` there are `training_forward` methods that receive audios and prepared sensevoice-small input "FBank" features. Training can be replicated by passing the same data to the `training_forward` methods.
 
 
 ## Acknowledgements & Citation
