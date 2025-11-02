@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Tuple
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -7,9 +7,9 @@ import torchaudio
 import os
 import random
 
-from cosyvoice.utils.common import IGNORE_ID
-from cosyvoice.transformer.label_smoothing_loss import LabelSmoothingLoss
-from cosyvoice.utils.common import th_accuracy
+from flexicodec.ar_tts.utils.common import IGNORE_ID
+from flexicodec.ar_tts.utils.label_smoothing_loss import LabelSmoothingLoss
+from flexicodec.ar_tts.utils.common import th_accuracy
 params = lambda model: sum(p.numel() for p in model.parameters())
 
 class FocalLoss(nn.Module):
@@ -643,38 +643,16 @@ class TransformerLM(torch.nn.Module):
         print(result['duration_classes'])
         return result
 import yaml
-def prepare_model(flexicodec_config_path, flexicodec_ckpt):
-    
-    with open(flexicodec_config_path, 'r') as f:
-        model_config = yaml.safe_load(f)['model']
-
-    import sys
-    from pathlib import Path
-    from zero_shot_tts_training.realtime_communication.taste_v2.modeling_flexicodec import FlexiCodec
-    import copy
-    codec_model_config = copy.deepcopy(model_config)
-    codec_model_config.pop('type')
-    codec_model_config.pop('resume_ckpt')
-
-    
-    codec_model_config['semantic_model_path'] = '/SenseVoiceSmall'
-    codec_model_config['semantic_model_type'] = 'sensevoice'
-    codec_model = FlexiCodec(
-        **codec_model_config
-    ).cpu()
-    codec_model.load_state_dict(torch.load(flexicodec_ckpt, map_location='cpu')['soundstream'])
-    codec_model.eval()
-    # codec_model.to('cuda')
-    return codec_model
 
 
-class TransformerLMWrapper(BaseModel):
-    def __init__(self, flexicodec_config_path, flexicodec_ckpt, **kwargs):
+class TransformerLMWrapper(nn.Module):
+    def __init__(self, **kwargs):
         super().__init__()
         print("Preparing FlexiCodec model for feature extraction...")
         # Note: flexicodec_model is not moved to any device per trainer implementation
         # The following line is commented out as `prepare_model` is not available in this context.
-        self.flexicodec_model = prepare_model(flexicodec_config_path, flexicodec_ckpt) 
+        from flexicodec.infer import prepare_model
+        self.flexicodec_model = prepare_model()['model'] 
         
         # Freeze FlexiCodec model parameters
         for param in self.flexicodec_model.parameters():
@@ -686,6 +664,11 @@ class TransformerLMWrapper(BaseModel):
         
         self.transformer_lm = create_transformer_lm_from_config(**kwargs)
         self.trainer_callbacks = []
+    
+    @property
+    def dualcodec_model(self):
+        """Alias for flexicodec_model for backward compatibility"""
+        return self.flexicodec_model
     
     @torch.no_grad()
     @torch.autocast('cuda', enabled=False)
@@ -724,6 +707,10 @@ class TransformerLMWrapper(BaseModel):
             'token_lengths': token_lengths,    # [B, T] - duration info for each speech token
             'speech_token_len': speech_token_len, # [B] - speech token length
         }
+    
+    def _extract_dualcodec_features(self, speech, mel, x_lens=None, sample_rate=16000, manual_threshold=None):
+        """Alias for _extract_flexicodec_features for backward compatibility"""
+        return self._extract_flexicodec_features(speech, mel, x_lens, sample_rate, manual_threshold)
     
     def training_forward(self, dl_output) -> Dict[str, Optional[torch.Tensor]]:
         x = dl_output.get("x", None)
@@ -919,7 +906,7 @@ def create_transformer_lm_from_config(
     Returns:
         TransformerLM: Initialized transformer language model
     """
-    from zero_shot_tts_training.cosyvoice.transformer.encoder import ConformerEncoder, TransformerEncoder
+    from flexicodec.ar_tts.utils.transformer.encoder import ConformerEncoder, TransformerEncoder
     
     # Create text encoder
     text_encoder = ConformerEncoder(
@@ -985,3 +972,202 @@ def create_transformer_lm_from_config(
     )
     
     return model
+
+
+def prepare_artts_model(
+    checkpoint_path: str,
+    dualcodec_config_path: Optional[str] = None,
+    dualcodec_ckpt: Optional[str] = None,
+    device: Optional[str] = None,
+    **model_kwargs
+) -> Dict:
+    """
+    Prepare and load the AR TTS (TransformerLMWrapper) model for inference.
+    
+    Args:
+        checkpoint_path: Path to the AR TTS model checkpoint (.pt or .safetensors)
+        dualcodec_config_path: Path to FlexiCodec config YAML file (optional, for loading FlexiCodec model)
+        dualcodec_ckpt: Path to FlexiCodec checkpoint (optional, for loading FlexiCodec model)
+        device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detection)
+        **model_kwargs: Additional model configuration parameters
+        
+    Returns:
+        dict: Dictionary containing 'model' and 'device' keys
+    """
+    # Default model configuration
+    default_config = {
+        'text_encoder_input_size': 1024,
+        'text_encoder_output_size': 1024,
+        'text_encoder_num_blocks': 4,
+        'llm_input_size': 1024,
+        'llm_output_size': 1024,
+        'llm_attention_heads': 8,
+        'llm_num_blocks': 16,
+        'llm_dropout_rate': 0.1,
+        'llm_positional_dropout_rate': 0.1,
+        'llm_attention_dropout_rate': 0.0,
+        'text_token_size': 51866,
+        'speech_token_size': 32768,
+        'spk_embed_dim': 192,
+        'duration_classes': 10,
+        'use_duration_conditioning': True,
+        'flex_framerate': True,
+        'flex_framerate_options': [0.86, 0.91],
+    }
+    
+    # Merge default config with provided kwargs
+    config = {**default_config, **model_kwargs}
+    
+    # Auto-detect device if not specified
+    if device is None:
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    
+    print(f"Creating TransformerLMWrapper model...")
+    
+    # Note: TransformerLMWrapper.__init__ will load FlexiCodec model internally
+    # If you need to customize FlexiCodec loading, you can pass the paths via config
+    # but the current implementation loads it automatically in __init__
+    
+    # Create model (FlexiCodec will be loaded inside TransformerLMWrapper.__init__)
+    model = TransformerLMWrapper(**config)
+    
+    # Load AR TTS checkpoint
+    print(f"Loading AR TTS checkpoint from: {checkpoint_path}")
+    if checkpoint_path.endswith('.safetensors'):
+        import safetensors.torch
+        state_dict = safetensors.torch.load_file(checkpoint_path)
+    else:
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = ckpt.get('model', ckpt.get('state_dict', ckpt))
+    
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    # if missing_keys:
+    #     print(f"Warning: Missing keys in checkpoint: {missing_keys[:5]}{'...' if len(missing_keys) > 5 else ''}")
+    # if unexpected_keys:
+    #     print(f"Warning: Unexpected keys in checkpoint: {unexpected_keys[:5]}{'...' if len(unexpected_keys) > 5 else ''}")
+    
+    model.eval()
+    model = model.to(device)
+    
+    return {
+        'model': model,
+        'device': device
+    }
+
+
+def infer_artts(
+    ar_model_dict: Dict,
+    text: str,
+    language: str = "en",
+    ref_audio_path: Optional[str] = None,
+    ref_text: str = "",
+    merging_threshold: Optional[float] = None,
+    beam_size: int = 1,
+    top_k: int = 25,
+    temperature: float = 1.0,
+    max_token_text_ratio: float = 20.0,
+    min_token_text_ratio: float = 0.0,
+    predict_duration: bool = True,
+    duration_top_k: int = 1,
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Perform AR TTS inference to generate speech tokens.
+    
+    Args:
+        ar_model_dict: Dictionary returned from prepare_artts_model()
+        text: Target text to synthesize
+        language: Language code ('en', 'zh', etc.)
+        ref_audio_path: Path to reference audio file
+        ref_text: Reference text (optional)
+        merging_threshold: Merging threshold/frame rate for inference (must be in flex_framerate_options)
+            Same as inference_framerate - controls FlexiCodec frame rate merging
+        beam_size: Beam size for AR decoding
+        top_k: Top-k sampling for AR decoding
+        temperature: Temperature for AR decoding
+        max_token_text_ratio: Maximum token-to-text ratio
+        min_token_text_ratio: Minimum token-to-text ratio
+        predict_duration: Whether to predict duration classes
+        duration_top_k: Top-k for duration sampling
+    
+    Returns:
+        tuple: (speech_tokens, duration_classes, prompt_speech_token)
+            - speech_tokens: Generated speech tokens [1, T]
+            - duration_classes: Duration classes for each token [1, T] or None
+            - prompt_speech_token: Prompt speech tokens [1, T]
+    """
+    from flexicodec.ar_tts.utils.whisper_tokenize import text2idx
+    from flexicodec.feature_extractors import FBankGen
+    
+    ar_model = ar_model_dict['model']
+    device = ar_model_dict['device']
+    
+    # Prepare text tokens
+    prompt_text = ref_text if ref_text else ""
+    combined_text = prompt_text + ", " + text if prompt_text else text
+    tokens = text2idx(combined_text, language=language, g2p_prob=1.0)
+    text_tokens = torch.tensor([tokens], dtype=torch.long)
+    text_lengths = torch.tensor([len(tokens)])
+    
+    text_tokens = text_tokens.to(device)
+    text_lengths = text_lengths.to(device)
+    
+    # Extract reference features
+    if ref_audio_path is None:
+        raise ValueError("ref_audio_path is required")
+    
+    ref_audio, sr = torchaudio.load(ref_audio_path)
+    if sr != 16000:
+        ref_audio = torchaudio.transforms.Resample(sr, 16000)(ref_audio)
+    if ref_audio.shape[0] > 1:
+        ref_audio = ref_audio.mean(dim=0, keepdim=True)
+    ref_audio = ref_audio.to(device)
+    
+    # Extract mel features
+    feature_extractor = FBankGen(sr=16000)
+    mel_features, _ = feature_extractor.extract_fbank(ref_audio.cpu())
+    mel_features = mel_features.to(device)
+    x_lens = torch.tensor([mel_features.shape[1]], dtype=torch.long).to(device)
+    
+    with torch.no_grad():
+        flexicodec_output = ar_model._extract_dualcodec_features(
+            ref_audio, mel=mel_features, x_lens=x_lens, sample_rate=16000
+        )
+    
+    prompt_speech_token = flexicodec_output['semantic_codes'].squeeze(1)
+    prompt_speech_token_len = flexicodec_output['speech_token_len']
+    prompt_token_lengths = flexicodec_output.get('token_lengths')
+    
+    if prompt_token_lengths is None:
+        predict_duration = False
+        print("Warning: No token lengths provided for prompt, duration prediction will be disabled.")
+    
+    # Generate speech tokens using AR model
+    result = ar_model.inference(
+        text=text_tokens,
+        text_len=text_lengths,
+        prompt_text=None,
+        prompt_text_len=None,
+        prompt_speech_token=prompt_speech_token,
+        prompt_speech_token_len=prompt_speech_token_len,
+        prompt_token_lengths=prompt_token_lengths,
+        embedding=None,
+        beam_size=beam_size,
+        top_k=top_k,
+        temperature=temperature,
+        max_token_text_ratio=max_token_text_ratio,
+        min_token_text_ratio=min_token_text_ratio,
+        predict_duration=predict_duration,
+        duration_top_k=duration_top_k,
+        inference_framerate=merging_threshold,  # merging_threshold is the same as inference_framerate
+    )
+    
+    speech_tokens = result['speech_tokens']
+    duration_classes = result.get('duration_classes', None)
+    
+    return speech_tokens, duration_classes, prompt_speech_token
+
