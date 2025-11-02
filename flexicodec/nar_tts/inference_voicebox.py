@@ -4,26 +4,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import argparse
 import os
-import sys
-import yaml
-import json
 import torch
 import torchaudio
 import soundfile as sf
-import multiprocessing as mp
-from pathlib import Path
-from datetime import datetime
 from functools import partial
 import torch.nn.functional as F
-from tqdm import tqdm
-import shutil
-import time
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 import sys
-sys.path.append('/Users/jiaqi/github/FlexiCodec')
-
+sys.path.append(f'{os.path.dirname(__file__)}/../..')
 from flexicodec.nar_tts.modeling_voicebox import VoiceboxWrapper
 from flexicodec.nar_tts.vocoder_model import get_vocos_model_spectrogram, mel_to_wav_vocos
 
@@ -33,6 +22,163 @@ from flexicodec.feature_extractors import FBankGen
 feature_extractor_for_dualcodec = FBankGen(sr=16000)
 
 threshold = 1.0
+
+# Global model cache
+_model_cache = None
+_vocoder_cache = None
+
+def prepare_voicebox_model(
+    checkpoint_path: str,
+    voicebox_config: Optional[Dict] = None,
+    device: Optional[str] = None,
+):
+    """
+    Prepare and load the VoiceboxWrapper model and vocoder for inference.
+    
+    Args:
+        checkpoint_path: Path to the model checkpoint (.pt or .safetensors)
+        voicebox_config: Optional VoiceBox model configuration dict. If None, uses default config.
+        device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detection)
+    
+    Returns:
+        dict: Dictionary containing 'model' and 'vocoder_decode_func' keys
+    """
+    global _model_cache, _vocoder_cache
+    
+    # Default VoiceBox config
+    if voicebox_config is None:
+        voicebox_config = {
+            'mel_dim': 128,
+            'hidden_size': 1024,
+            'num_layers': 16,
+            'num_heads': 16,
+            'cfg_scale': 0.2,
+            'use_cond_code': True,
+            'cond_codebook_size': 32768,
+            'cond_scale_factor': 4,
+            'cond_dim': 1024,
+            'sigma': 1e-5,
+            'time_scheduler': "cos"
+        }
+    
+    # Auto-detect device if not specified
+    if device is None:
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    
+    print(f"Loading VoiceboxWrapper model...")
+    model = VoiceboxWrapper(voicebox_config=voicebox_config)
+    
+    # Load checkpoint
+    print(f"Loading checkpoint from: {checkpoint_path}")
+    if checkpoint_path.endswith('.safetensors'):
+        import safetensors.torch
+        state_dict = safetensors.torch.load_file(checkpoint_path)
+    else:
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = ckpt.get('model', ckpt.get('state_dict', ckpt))
+    
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+    model = model.to(device)
+    
+    # Load vocoder
+    print(f"Loading vocoder on {device}...")
+    vocoder_decode_func, _ = load_vocoder(device)
+    
+    return {
+        'model': model,
+        'vocoder_decode_func': vocoder_decode_func,
+        'device': device
+    }
+
+
+def infer_voicebox_tts(
+    model_dict: Dict,
+    gt_audio_path: Optional[str] = None,
+    ref_audio_path: Optional[str] = None,
+    gt_audio: Optional[torch.Tensor] = None,
+    ref_audio: Optional[torch.Tensor] = None,
+    gt_sample_rate: Optional[int] = None,
+    ref_sample_rate: Optional[int] = None,
+    n_timesteps: int = 15,
+    cfg: float = 2.0,
+    rescale_cfg: float = 0.75,
+) -> tuple:
+    """
+    Perform Voicebox-based NAR TTS inference.
+    
+    Args:
+        model_dict: Dictionary returned from prepare_voicebox_model()
+        gt_audio_path: Path to ground truth audio file (alternative to gt_audio)
+        ref_audio_path: Path to reference audio file (alternative to ref_audio)
+        gt_audio: Ground truth audio tensor [1, T] (alternative to gt_audio_path)
+        ref_audio: Reference audio tensor [1, T] (alternative to ref_audio_path)
+        gt_sample_rate: Sample rate of gt_audio if provided as tensor
+        ref_sample_rate: Sample rate of ref_audio if provided as tensor
+        n_timesteps: Number of diffusion timesteps (default: 15)
+        cfg: Classifier-free guidance scale (default: 2.0)
+        rescale_cfg: Rescaling factor for CFG (default: 0.75)
+    
+    Returns:
+        tuple: (output_audio_tensor, sample_rate)
+            - output_audio_tensor: Generated audio tensor [T] or [1, T]
+            - sample_rate: Sample rate of output audio (16000 or 24000 Hz)
+    """
+    model = model_dict['model']
+    vocoder_decode_func = model_dict['vocoder_decode_func']
+    device = model_dict['device']
+    
+    # Load or prepare ground truth audio
+    if gt_audio_path is not None:
+        gt_audio, gt_sr = torchaudio.load(gt_audio_path)
+    elif gt_audio is not None:
+        gt_audio = gt_audio.clone()
+        gt_sr = gt_sample_rate if gt_sample_rate is not None else 16000
+    else:
+        raise ValueError("Either gt_audio_path or gt_audio must be provided")
+    
+    # Load or prepare reference audio
+    if ref_audio_path is not None:
+        ref_audio, ref_sr = torchaudio.load(ref_audio_path)
+    elif ref_audio is not None:
+        ref_audio = ref_audio.clone()
+        ref_sr = ref_sample_rate if ref_sample_rate is not None else 16000
+    else:
+        raise ValueError("Either ref_audio_path or ref_audio must be provided")
+    
+    # Process ground truth audio
+    if gt_sr != 16000:
+        gt_audio = torchaudio.transforms.Resample(gt_sr, 16000)(gt_audio)
+    if gt_audio.shape[0] > 1:
+        gt_audio = gt_audio.mean(dim=0, keepdim=True)
+    gt_audio = gt_audio.to(device)
+    
+    # Process reference audio
+    if ref_sr != 16000:
+        ref_audio = torchaudio.transforms.Resample(ref_sr, 16000)(ref_audio)
+    if ref_audio.shape[0] > 1:
+        ref_audio = ref_audio.mean(dim=0, keepdim=True)
+    ref_audio = ref_audio.to(device)
+    
+    # Call the inference function
+    return infer_voicebox_librispeech(
+        model=model,
+        vocoder_decode_func=vocoder_decode_func,
+        gt_audio_path=None,  # Not used, audio already loaded
+        ref_audio_path=None,  # Not used, audio already loaded
+        gt_audio=gt_audio,
+        ref_audio=ref_audio,
+        device=device,
+        n_timesteps=n_timesteps,
+        cfg=cfg,
+        rescale_cfg=rescale_cfg,
+    )
+
 
 def load_vocoder(device='cuda'):
     """Load Vocos vocoder and mel extractor"""
@@ -47,8 +193,10 @@ def load_vocoder(device='cuda'):
 def infer_voicebox_librispeech(
     model: VoiceboxWrapper,
     vocoder_decode_func,
-    gt_audio_path: str,
-    ref_audio_path: str,
+    gt_audio_path: Optional[str] = None,
+    ref_audio_path: Optional[str] = None,
+    gt_audio: Optional[torch.Tensor] = None,
+    ref_audio: Optional[torch.Tensor] = None,
     device: str = 'cuda',
     n_timesteps: int = 10,
     cfg: float = 2.0,
@@ -60,22 +208,32 @@ def infer_voicebox_librispeech(
     decoder_latent_pass_transformer = model.decoder_latent_pass_transformer
     
     # 1. Load ground truth audio and extract semantic codes
-    print(f"Loading ground truth audio: {gt_audio_path}")
-    gt_audio, sr = torchaudio.load(gt_audio_path)
-    if sr != 16000:
-        gt_audio = torchaudio.transforms.Resample(sr, 16000)(gt_audio)
-    if gt_audio.shape[0] > 1:
-        gt_audio = gt_audio.mean(dim=0, keepdim=True)
-    gt_audio = gt_audio.to(device)
+    if gt_audio is None:
+        if gt_audio_path is None:
+            raise ValueError("Either gt_audio_path or gt_audio must be provided")
+        print(f"Loading ground truth audio: {gt_audio_path}")
+        gt_audio, sr = torchaudio.load(gt_audio_path)
+        if sr != 16000:
+            gt_audio = torchaudio.transforms.Resample(sr, 16000)(gt_audio)
+        if gt_audio.shape[0] > 1:
+            gt_audio = gt_audio.mean(dim=0, keepdim=True)
+        gt_audio = gt_audio.to(device)
+    else:
+        gt_audio = gt_audio.to(device)
 
     # 2. Load reference audio for prompt
-    print(f"Loading reference audio for prompt: {ref_audio_path}")
-    ref_audio, sr = torchaudio.load(ref_audio_path)
-    if sr != 16000:
-        ref_audio = torchaudio.transforms.Resample(sr, 16000)(ref_audio)
-    if ref_audio.shape[0] > 1:
-        ref_audio = ref_audio.mean(dim=0, keepdim=True)
-    ref_audio = ref_audio.to(device)
+    if ref_audio is None:
+        if ref_audio_path is None:
+            raise ValueError("Either ref_audio_path or ref_audio must be provided")
+        print(f"Loading reference audio for prompt: {ref_audio_path}")
+        ref_audio, sr = torchaudio.load(ref_audio_path)
+        if sr != 16000:
+            ref_audio = torchaudio.transforms.Resample(sr, 16000)(ref_audio)
+        if ref_audio.shape[0] > 1:
+            ref_audio = ref_audio.mean(dim=0, keepdim=True)
+        ref_audio = ref_audio.to(device)
+    else:
+        ref_audio = ref_audio.to(device)
 
     # 3. Extract semantic codes from reference audio
     print("Extracting semantic codes from reference audio...")
@@ -166,69 +324,28 @@ def infer_voicebox_librispeech(
             return predicted_audio.cpu().squeeze(), 24000
 
 if __name__ == "__main__":
-    # mp.set_start_method('spawn', force=True)
-    # main()
-    
-    config = {
-        'mel_dim': 128,
-        'hidden_size': 1024,
-        'num_layers': 16,
-        'num_heads': 16,
-        'cfg_scale': 0.2,
-        'use_cond_code': True,
-        'cond_codebook_size': 32768,  # Default VoiceBox codebook size
-        'cond_scale_factor': 4,
-        'cond_dim': 1024,
-        'sigma': 1e-5,
-        'time_scheduler': "cos"
-    }
-    model = VoiceboxWrapper(voicebox_config=config)
-    checkpoint_path = '/Users/jiaqi/github/FlexiCodec/voicebox_300M_b1200_ga3_12hz_d2codec780ksteps_6hz.safetensors'
-    # Load checkpoint - support both .pt and .safetensors formats
-    if checkpoint_path.endswith('.safetensors'):
-        import safetensors.torch
-        state_dict = safetensors.torch.load_file(checkpoint_path)
-    else:
-        ckpt = torch.load(checkpoint_path, map_location='cpu')
-        state_dict = ckpt.get('model', ckpt.get('state_dict', ckpt))
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    
-    # Set device - prefer CUDA, then MPS, then CPU
-    if torch.cuda.is_available():
-        device = 'cuda'
-    elif torch.backends.mps.is_available():
-        device = 'mps'
-    else:
-        device = 'cpu'
-    print(f"Using device: {device}")
-    model = model.to(device)
-    
-    # Load vocoder
-    print("Loading vocoder...")
-    vocoder_decode_func, _ = load_vocoder(device)
-    
-    # Single file inference
+    # Test/example usage
+    checkpoint_path = '/Users/jiaqi/github/FlexiCodec/nartts.safetensors'
     gt_audio_path = '/Users/jiaqi/github/FlexiCodec/audio_examples/61-70968-0000_gt.wav'
     ref_audio_path = '/Users/jiaqi/github/FlexiCodec/audio_examples/61-70968-0000_ref.wav'
-    print(f"\nRunning inference:")
-    print(f"  Ground truth audio: {gt_audio_path}")
-    print(f"  Reference audio: {ref_audio_path}")
+    output_path = '/Users/jiaqi/github/FlexiCodec/61-70968-0000_output.wav'
+    
+    # Prepare model (loads model and vocoder)
+    print("Loading model...")
+    model_dict = prepare_voicebox_model(checkpoint_path)
     
     # Run inference
-    output_audio, output_sr = infer_voicebox_librispeech(
-        model=model,
-        vocoder_decode_func=vocoder_decode_func,
+    print("Running inference...")
+    output_audio, output_sr = infer_voicebox_tts(
+        model_dict=model_dict,
         gt_audio_path=gt_audio_path,
         ref_audio_path=ref_audio_path,
-        device=device,
         n_timesteps=15,
         cfg=2.0,
         rescale_cfg=0.75
     )
     
     # Save output
-    output_path = '/Users/jiaqi/github/FlexiCodec/61-70968-0000_output.wav'
     if output_sr == 16000:
         torchaudio.save(output_path, output_audio.unsqueeze(0) if output_audio.dim() == 1 else output_audio, output_sr)
     else:
