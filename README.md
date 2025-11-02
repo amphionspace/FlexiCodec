@@ -70,10 +70,6 @@ sudo apt install espeak-ng
 pip install cached_path phonemizer openai-whisper
 ```
 
-Our code for Flexicodec-based AR TTS is available at [`flexicodec/ar_tts/modeling_artts.py`](flexicodec/ar_tts/modeling_artts.py). The training step is inside `training_forward` method. It receives a `dl_output` dictionary containing `x` (the [`feature_extractor`](flexicodec/infer.py#L50) output), `x_lens` (length of each x before padding), `audio` (the 16khz audio tensor). The inference is at the `inference` method in the same file.
-
-Our code for Flow matching-based NAR TTS is based on the voicebox-based implementation [here](https://github.com/jiaqili3/DualCodec/tree/main/dualcodec/model_tts/voicebox).
-
 ### FlexiCodec-based Voicebox NAR Inference
 The VoiceBox NAR system can decode FlexiCodec's RVQ-1 tokens into speech. It is used as the second stage in FlexiCodec-TTS, but can also be used standalone.
 To run NAR TTS inference using FlexiCodec-Voicebox:
@@ -183,7 +179,9 @@ torchaudio.save("output.wav", output_audio.unsqueeze(0) if output_audio.dim() ==
 - Set `use_nar=False` in `tts_synthesize` to use AR-only decoding (faster but lower quality)
 
 ### Training reference implementations
-Inside `flexicodec/ar_tts/modeling_artts.py` and `flexicodec/nar_tts/modeling_voicebox.py` there are `training_forward` methods that receive audios and prepared sensevoice-small input "FBank" features. Training can be replicated by passing the same data to the `training_forward` methods.
+Inside `flexicodec/ar_tts/modeling_artts.py` and `flexicodec/nar_tts/modeling_voicebox.py` there are `training_forward` methods that receive audios and prepared sensevoice-small input "FBank" features. (`dl_output` dictionary containing `x` (the [`feature_extractor`](flexicodec/infer.py#L50) output), `x_lens` (length of each x before padding), `audio` (the 16khz audio tensor)). 
+Training can be replicated by passing the same data to the `training_forward` methods. 
+
 
 
 ## Acknowledgements & Citation
