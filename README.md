@@ -81,7 +81,7 @@ from flexicodec.nar_tts.inference_voicebox import (
     prepare_voicebox_model, 
     infer_voicebox_tts
 )
-import cached_path
+from cached_path import cached_path
 # Prepare model (loads model and vocoder)
 checkpoint_path = cached_path('hf://jiaqili3/flexicodec/nartts.safetensors')
 model_dict = prepare_voicebox_model(checkpoint_path)
@@ -139,7 +139,7 @@ import torchaudio
 from flexicodec.ar_tts.inference_tts import tts_synthesize
 from flexicodec.ar_tts.modeling_artts import prepare_artts_model
 from flexicodec.nar_tts.inference_voicebox import prepare_voicebox_model
-import cached_path
+from cached_path import cached_path
 
 # Prepare both AR and NAR models
 ar_checkpoint = cached_path('hf://jiaqili3/flexicodec/artts.safetensors')
